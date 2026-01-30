@@ -3,10 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"math/rand"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -27,12 +27,12 @@ var upgrader = websocket.Upgrader{
 
 // 太平洋网络IP接口返回结构体（JSON格式）
 type PConlineIPResp struct {
-	Ip        string `json:"ip"`
-	Pro       string `json:"pro"`
-	ProCode   string `json:"proCode"`
-	City      string `json:"city"`
-	CityCode  string `json:"cityCode"`
-	Isp       string `json:"isp"`
+	Ip       string `json:"ip"`
+	Pro      string `json:"pro"`
+	ProCode  string `json:"proCode"`
+	City     string `json:"city"`
+	CityCode string `json:"cityCode"`
+	Isp      string `json:"isp"`
 }
 
 // 客户端结构体（含IP/归属地/用户ID）
@@ -41,6 +41,7 @@ type Client struct {
 	UserID string          // 用户ID（自定义/随机）
 	IP     string          // 客户端IP
 	Region string          // IP归属地（省-市-运营商）
+	Color  string          // 用户随机颜色
 }
 
 // 消息结构体（前端<->后端通信格式）
@@ -51,15 +52,14 @@ type Message struct {
 	IP      string `json:"ip"`      // 发送者IP
 	Region  string `json:"region"`  // IP归属地
 	Time    string `json:"time"`    // 时间
+	Color   string `json:"color"`   // 用户颜色
 }
 
 // 聊天室核心管理（含固定登录密码）
 type ChatServer struct {
 	clients       map[*websocket.Conn]*Client
 	broadcast     chan Message
-	logChannel    chan string
 	clientsMutex  sync.RWMutex
-	outputFile    *os.File
 	fixedPassword string // 固定登录密码
 }
 
@@ -67,35 +67,91 @@ type ChatServer struct {
 var adjectives = []string{"快乐", "聪明", "安静", "活泼", "神秘", "勇敢", "幽默", "优雅", "可爱", "帅气"}
 var nouns = []string{"小猫", "小狗", "熊猫", "老虎", "兔子", "狐狸", "海豚", "老鹰", "狮子", "蝴蝶"}
 
+// 预定义颜色列表，确保颜色美观且易于区分
+var colors = []string{
+	"#00ff00", // 绿色
+	"#00ffff", // 青色
+	"#ff0000", // 红色
+	"#ff00ff", // 品红
+	"#ffff00", // 黄色
+	"#0000ff", // 蓝色
+	"#ff6600", // 橙色
+	"#9933ff", // 紫色
+	"#33ff99", // 浅绿色
+	"#ff3399", // 粉红色
+	"#3399ff", // 浅蓝色
+	"#ffcc00", // 金黄色
+	"#00ccff", // 亮蓝色
+	"#ff9900", // 深橙色
+	"#66ff33", // 鲜绿色
+	"#cc00ff", // 深紫色
+	"#ff3333", // 鲜红色
+	"#33ffcc", // 蓝绿色
+	"#ffcc33", // 浅黄色
+	"#9966ff", // 薰衣草色
+	"#33ccff", // 天蓝色
+	"#ff66b3", // 淡紫色
+	"#66ff99", // 薄荷绿
+	"#ff99cc", // 浅粉色
+	"#66ccff", // 冰蓝色
+	"#ffcc66", // 沙褐色
+	"#99ffcc", // 水绿色
+	"#cc66ff", // 淡紫色
+	"#ff3366", // 玫红色
+	"#3366ff", // 深蓝色
+}
+
+// 处理IP地址的隐私显示
+func maskIP(ip string) string {
+	// 处理IP样式
+	if strings.Count(ip, ".") == 3 {
+		parts := strings.Split(ip, ".")
+		if len(parts) == 4 {
+			return parts[0] + ":" + parts[1] + ":*"
+		}
+	}
+	// 处理IPv6地址
+	if strings.Count(ip, ":") >= 2 {
+		parts := strings.Split(ip, ":")
+		if len(parts) >= 2 {
+			return parts[0] + ":" + parts[1] + ":*"
+		}
+	}
+	return ip
+}
+
 // 新建聊天室（传入固定密码）
 func NewChatServer(fixedPassword string) *ChatServer {
-	// 打开日志文件
-	file, err := os.OpenFile("chat_history.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("打开日志文件失败: %v", err)
-	}
 	return &ChatServer{
 		clients:       make(map[*websocket.Conn]*Client),
 		broadcast:     make(chan Message, 200), // 增大广播通道缓冲区
-		logChannel:    make(chan string, 400),
-		outputFile:    file,
 		fixedPassword: fixedPassword,
 	}
 }
 
+// 初始化随机数种子
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 // 生成随机用户ID
 func (s *ChatServer) generateRandomID() string {
-	t := time.Now()
-	adj := adjectives[int(t.UnixNano())%len(adjectives)]
-	noun := nouns[int(t.UnixNano())%len(nouns)]
-	num := t.UnixNano()%900 + 100
+	adj := adjectives[rand.Intn(len(adjectives))]
+	noun := nouns[rand.Intn(len(nouns))]
+	num := rand.Intn(900) + 100
 	return fmt.Sprintf("%s%s%d", adj, noun, num)
+}
+
+// 生成随机用户颜色
+func (s *ChatServer) generateRandomColor() string {
+	color := colors[rand.Intn(len(colors))]
+	return color
 }
 
 // GBK转UTF-8 核心函数（解决中文乱码）
 func GbkToUtf8(s []byte) ([]byte, error) {
 	reader := transform.NewReader(strings.NewReader(string(s)), simplifiedchinese.GBK.NewDecoder())
-	d, e := ioutil.ReadAll(reader)
+	d, e := io.ReadAll(reader)
 	if e != nil {
 		return nil, e
 	}
@@ -124,7 +180,7 @@ func (s *ChatServer) getIPRegion(ip string) string {
 	defer resp.Body.Close()
 
 	// 读取GBK编码的响应体
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil || resp.StatusCode != 200 {
 		return "归属地查询-接口返回失败"
 	}
@@ -142,22 +198,13 @@ func (s *ChatServer) getIPRegion(ip string) string {
 		return "归属地查询-解析失败"
 	}
 
-	// 第五步：拼接归属地，空值兜底处理
-	pro := strings.TrimSpace(ipResp.Pro)
+	// 第五步：只返回城市信息，空值兜底处理
 	city := strings.TrimSpace(ipResp.City)
-	isp := strings.TrimSpace(ipResp.Isp)
-	if pro == "" || pro == "null" {
-		pro = "未知省份"
-	}
 	if city == "" || city == "null" {
 		city = "未知城市"
 	}
-	if isp == "" || isp == "null" {
-		isp = "未知运营商"
-	}
-	region := fmt.Sprintf("%s-%s-%s", pro, city, isp)
 
-	return region
+	return city
 }
 
 // 广播消息给所有客户端（修复遍历错误，增加错误处理，防止单客户端断连影响全局）
@@ -181,14 +228,8 @@ func (s *ChatServer) Broadcaster() {
 				s.clientsMutex.Unlock()
 			}
 		}
-		// 记录日志（含IP+归属地+ID）
-		logStr := fmt.Sprintf("[%s] [%s] %s | %s | %s: %s", msg.Time, msg.Type, msg.IP, msg.Region, msg.UserID, msg.Content)
-		s.logChannel <- logStr
 	}
 }
-
-
-
 
 // 处理单个WebSocket客户端连接（加固错误处理，防止解析失败导致断连）
 func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
@@ -205,15 +246,29 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 
 	// 提取客户端纯IP（优化解析，兼容IPv6和带端口的IP）
 	clientIP := r.RemoteAddr
-	if strings.Contains(clientIP, ":") {
+
+	// 处理IPv6地址格式 [2001:db8::1]:12345
+	if strings.Contains(clientIP, "[") && strings.Contains(clientIP, "]") {
+		// 提取[]中的内容
+		startIdx := strings.Index(clientIP, "[")
+		endIdx := strings.Index(clientIP, "]")
+		if startIdx < endIdx {
+			clientIP = clientIP[startIdx+1 : endIdx]
+		}
+	} else if strings.Contains(clientIP, ":") {
+		// 处理IPv4地址格式 192.168.1.1:12345
 		ipParts := strings.Split(clientIP, ":")
 		if len(ipParts) > 1 {
 			clientIP = ipParts[0]
 		}
 	}
+
+	// 最终清理，确保没有多余的括号
 	clientIP = strings.Trim(clientIP, "[]")
 	// 查询IP归属地（即使解析失败，也不会导致连接断开）
 	clientRegion := s.getIPRegion(clientIP)
+	// 处理IP地址的隐私显示
+	maskedIP := maskIP(clientIP)
 	var client *Client
 
 	// 第一步：密码验证（增加错误处理，防止客户端异常输入导致断连）
@@ -273,12 +328,16 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 		// 过滤特殊字符，防止乱码和注入
 		userID = strings.ReplaceAll(strings.ReplaceAll(customID, "\n", ""), "\r", "")
 	}
+	// 生成随机颜色
+	color := s.generateRandomColor()
+
 	// 初始化客户端
 	client = &Client{
 		Conn:   conn,
 		UserID: userID,
 		IP:     clientIP,
 		Region: clientRegion,
+		Color:  color,
 	}
 
 	// 第三步：验证通过，加入聊天室
@@ -290,9 +349,9 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 	// 发送欢迎消息
 	now := time.Now().Format("15:04:05")
 	welcomeMsg := Message{
-		Type:    "welcome",
-		Content: fmt.Sprintf("=== 终端聊天室 v2.0 ===\n✅ 登录成功！当前在线：%d 人\n你的信息：%s | %s | %s\n📌 可用命令：/online(在线列表) /help(帮助) /exit(退出)",
-			onlineCount, clientIP, clientRegion, userID),
+		Type: "welcome",
+		Content: fmt.Sprintf("=== 终端聊天室 v2.0 ===\n✅ 登录成功！当前在线：%d 人\n你的信息：%s | %s | %s\n📌 帮助命令：/help(帮助)",
+			onlineCount, maskedIP, clientRegion, userID),
 		Time: now,
 	}
 	if err := conn.WriteJSON(welcomeMsg); err != nil {
@@ -303,11 +362,12 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 	// 广播加入消息
 	joinMsg := Message{
 		Type:    "join",
-		Content: fmt.Sprintf("【系统】%s | %s | %s 加入聊天室", clientIP, clientRegion, userID),
+		Content: fmt.Sprintf("【系统】%s | %s | %s 加入聊天室", maskedIP, clientRegion, userID),
 		UserID:  userID,
-		IP:      clientIP,
+		IP:      maskedIP,
 		Region:  clientRegion,
 		Time:    now,
+		Color:   color,
 	}
 	s.broadcast <- joinMsg
 	log.Printf("[%s] 【加入】%s | %s | %s，当前在线：%d", now, clientIP, clientRegion, userID, onlineCount)
@@ -326,11 +386,12 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 
 			leaveMsg := Message{
 				Type:    "leave",
-				Content: fmt.Sprintf("【系统】%s | %s | %s 异常离开聊天室", clientIP, clientRegion, userID),
+				Content: fmt.Sprintf("【系统】%s | %s | %s 异常离开聊天室", maskedIP, clientRegion, userID),
 				UserID:  userID,
-				IP:      clientIP,
+				IP:      maskedIP,
 				Region:  clientRegion,
 				Time:    time.Now().Format("15:04:05"),
+				Color:   color,
 			}
 			s.broadcast <- leaveMsg
 			log.Printf("[%s] 【离开】%s | %s | %s，当前在线：%d", leaveMsg.Time, clientIP, clientRegion, userID, onlineCount)
@@ -340,8 +401,9 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 		// 补充消息基础信息
 		msg.Time = time.Now().Format("15:04:05")
 		msg.UserID = userID
-		msg.IP = clientIP
+		msg.IP = maskedIP
 		msg.Region = clientRegion
+		msg.Color = color
 		inputContent := strings.TrimSpace(msg.Content)
 
 		// 处理命令/普通消息，过滤空消息
@@ -354,21 +416,22 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 			s.clientsMutex.Unlock()
 			leaveMsg := Message{
 				Type:    "leave",
-				Content: fmt.Sprintf("【系统】%s | %s | %s 主动退出聊天室", clientIP, clientRegion, userID),
+				Content: fmt.Sprintf("【系统】%s | %s | %s 主动退出聊天室", maskedIP, clientRegion, userID),
 				UserID:  userID,
-				IP:      clientIP,
+				IP:      maskedIP,
 				Region:  clientRegion,
 				Time:    msg.Time,
+				Color:   color,
 			}
 			s.broadcast <- leaveMsg
 			log.Printf("[%s] 【退出】%s | %s | %s，当前在线：%d", msg.Time, clientIP, clientRegion, userID, onlineCount)
 			return
 		case "/online":
-			// 在线列表（优化排版，适配长归属地）
+			// 在线列表（优化排版，适配长城市名）
 			s.clientsMutex.RLock()
-			onlineList := fmt.Sprintf("=== 在线用户列表（%d人）===\nIP地址         | IP归属地                | 用户ID\n----------------|-------------------------|------------------------\n", len(s.clients))
+			onlineList := fmt.Sprintf("=== 在线用户列表（%d人）===\nIP地址         | 城市                    | 用户ID\n----------------|-------------------------|------------------------\n", len(s.clients))
 			for _, c := range s.clients {
-				onlineList += fmt.Sprintf("%-15s | %-28s | %s\n", c.IP, c.Region, c.UserID)
+				onlineList += fmt.Sprintf("%-15s | %-28s | %s\n", maskIP(c.IP), c.Region, c.UserID)
 			}
 			s.clientsMutex.RUnlock()
 			onlineMsg := Message{
@@ -381,10 +444,21 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 			// 帮助信息
 			helpMsg := Message{
 				Type:    "help",
-				Content: "=== 终端聊天室-可用命令 ===\n/online - 查看在线用户列表（IP | 归属地 | 用户ID）\n/help   - 显示当前帮助信息\n/exit   - 主动退出聊天室\n直接输入 - 发送群聊消息（所有在线用户可见）",
+				Content: "=== 终端聊天室-可用命令 ===\n/online - 查看在线用户列表（IP | 归属地 | 用户ID）\n/help   - 显示当前帮助信息\n/exit   - 主动退出聊天室\n/color  - 随机更换自己输入内容的颜色\n直接输入 - 发送群聊消息（所有在线用户可见）",
 				Time:    msg.Time,
 			}
 			conn.WriteJSON(helpMsg)
+		case "/color":
+			// 随机更换颜色
+			newColor := s.generateRandomColor()
+			color = newColor
+			client.Color = newColor
+			colorMsg := Message{
+				Type:    "color",
+				Content: "你已变色！",
+				Time:    msg.Time,
+			}
+			conn.WriteJSON(colorMsg)
 		default:
 			// 普通群聊消息，过滤空内容
 			if inputContent != "" {
@@ -403,21 +477,20 @@ func (s *ChatServer) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// ====================== 请确认你的固定登录密码 ======================
-	fixedPassword := "123456" // 可直接修改为你需要的密码，如admin/666666
+	fixedPassword := "123" // 可直接修改为你需要的密码，如admin/666666
 	// =====================================================================
 
 	// 初始化聊天室
 	server := NewChatServer(fixedPassword)
-	// 启动广播和日志协程
+	// 启动广播协程
 	go server.Broadcaster()
-
 
 	// 路由配置
 	http.HandleFunc("/", server.ServeIndex)
 	http.HandleFunc("/ws", server.HandleClient)
 
-	// 启动服务，监听8080端口（增加端口占用检测）
-	port := "8080"
+	// 启动服务，监听18080端口（增加端口占用检测）
+	port := "18080"
 	log.Printf("=====================================")
 	log.Printf("终端聊天室 v2.0 启动成功！【乱码+断连+编译错误已修复】")
 	log.Printf("固定登录密码：%s", fixedPassword)
@@ -425,6 +498,6 @@ func main() {
 	log.Printf("=====================================")
 	err := http.ListenAndServe(":"+port, nil)
 	if err != nil {
-		log.Fatalf("服务启动失败：%v（请检查8080端口是否被占用）", err)
+		log.Fatalf("服务启动失败：%v（请检查18080端口是否被占用）", err)
 	}
 }
