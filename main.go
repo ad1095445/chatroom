@@ -7,6 +7,8 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,10 +59,13 @@ type Message struct {
 
 // 聊天室核心管理（含固定登录密码）
 type ChatServer struct {
-	clients       map[*websocket.Conn]*Client
-	broadcast     chan Message
-	clientsMutex  sync.RWMutex
-	fixedPassword string // 固定登录密码
+	clients           map[*websocket.Conn]*Client
+	broadcast         chan Message
+	clientsMutex      sync.RWMutex
+	fixedPassword     string
+	shutdownTimers    []*time.Timer
+	shutdownTime      int
+	shutdownStartTime time.Time
 }
 
 // 随机ID生成词库
@@ -267,6 +272,7 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 	clientIP = strings.Trim(clientIP, "[]")
 	// 查询IP归属地（即使解析失败，也不会导致连接断开）
 	clientRegion := s.getIPRegion(clientIP)
+
 	// 处理IP地址的隐私显示
 	maskedIP := maskIP(clientIP)
 	var client *Client
@@ -407,8 +413,7 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 		inputContent := strings.TrimSpace(msg.Content)
 
 		// 处理命令/普通消息，过滤空消息
-		switch inputContent {
-		case "/exit", "/quit":
+		if inputContent == "/exit" || inputContent == "/quit" {
 			// 主动退出
 			s.clientsMutex.Lock()
 			delete(s.clients, conn)
@@ -426,7 +431,7 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 			s.broadcast <- leaveMsg
 			log.Printf("[%s] 【退出】%s | %s | %s，当前在线：%d", msg.Time, clientIP, clientRegion, userID, onlineCount)
 			return
-		case "/online":
+		} else if inputContent == "/online" {
 			// 在线列表（优化排版，适配长城市名）
 			s.clientsMutex.RLock()
 			onlineList := fmt.Sprintf("=== 在线用户列表（%d人）===\nIP地址         | 城市                    | 用户ID\n----------------|-------------------------|------------------------\n", len(s.clients))
@@ -440,15 +445,15 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 				Time:    msg.Time,
 			}
 			conn.WriteJSON(onlineMsg)
-		case "/help":
+		} else if inputContent == "/help" {
 			// 帮助信息
 			helpMsg := Message{
 				Type:    "help",
-				Content: "=== 终端聊天室-可用命令 ===\n/online - 查看在线用户列表（IP | 归属地 | 用户ID）\n/help   - 显示当前帮助信息\n/exit   - 主动退出聊天室\n/color  - 随机更换自己输入内容的颜色\n直接输入 - 发送群聊消息（所有在线用户可见）",
+				Content: "=== 终端聊天室-可用命令 ===\n/online - 查看在线用户列表（IP | 归属地 | 用户ID）\n/help   - 显示当前帮助信息\n/exit   - 主动退出聊天室\n/color  - 随机更换自己输入内容的颜色\n/close [分钟] 设置服务器关闭时间\n直接输入 - 发送群聊消息（所有在线用户可见）",
 				Time:    msg.Time,
 			}
 			conn.WriteJSON(helpMsg)
-		case "/color":
+		} else if inputContent == "/color" {
 			// 随机更换颜色
 			newColor := s.generateRandomColor()
 			color = newColor
@@ -459,7 +464,122 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 				Time:    msg.Time,
 			}
 			conn.WriteJSON(colorMsg)
-		default:
+		} else if strings.HasPrefix(inputContent, "/close") {
+			// 解析命令参数
+			parts := strings.Fields(inputContent)
+			if len(parts) == 1 {
+				// 没有参数，显示当前关闭时间
+				if s.shutdownTime > 0 {
+					remaining := s.shutdownTime - int(time.Since(s.shutdownStartTime).Minutes())
+					if remaining < 0 {
+						remaining = 0
+					}
+					closeMsg := Message{
+						Type:    "system",
+						Content: fmt.Sprintf("【系统通知】服务器将在 %d 分钟后关闭", remaining),
+						Time:    msg.Time,
+					}
+					conn.WriteJSON(closeMsg)
+				} else {
+					closeMsg := Message{
+						Type:    "system",
+						Content: "【系统通知】服务器未设置关闭时间",
+						Time:    msg.Time,
+					}
+					conn.WriteJSON(closeMsg)
+				}
+			} else if len(parts) == 2 {
+				// 有参数，设置关闭时间
+				minutes, err := strconv.Atoi(parts[1])
+				if err != nil || minutes <= 0 {
+					closeMsg := Message{
+						Type:    "system",
+						Content: "【系统通知】请输入有效的分钟数",
+						Time:    msg.Time,
+					}
+					conn.WriteJSON(closeMsg)
+					continue
+				}
+
+				// 取消之前的所有定时器
+				for _, timer := range s.shutdownTimers {
+					if timer != nil {
+						timer.Stop()
+					}
+				}
+				s.shutdownTimers = []*time.Timer{}
+
+				// 设置关闭时间
+				s.shutdownTime = minutes
+				s.shutdownStartTime = time.Now()
+
+				// 发送设置成功通知
+				closeMsg := Message{
+					Type:    "system",
+					Content: fmt.Sprintf("【系统通知】服务器将在 %d 分钟后关闭", minutes),
+					Time:    msg.Time,
+				}
+				s.broadcast <- closeMsg
+
+				// 设置5分钟提醒定时器
+				if minutes > 5 {
+					timer := time.AfterFunc(time.Duration(minutes-5)*time.Minute, func() {
+						notifyMsg := Message{
+							Type:    "system",
+							Content: "【系统通知】服务器将在5分钟后关闭，请做好准备！",
+							Time:    time.Now().Format("15:04:05"),
+						}
+						s.broadcast <- notifyMsg
+
+						// 设置1分钟提醒定时器
+						timer := time.AfterFunc(4*time.Minute, func() {
+							notifyMsg := Message{
+								Type:    "system",
+								Content: "【系统通知】服务器将在1分钟后关闭，请做好准备！",
+								Time:    time.Now().Format("15:04:05"),
+							}
+							s.broadcast <- notifyMsg
+						})
+						s.shutdownTimers = append(s.shutdownTimers, timer)
+					})
+					s.shutdownTimers = append(s.shutdownTimers, timer)
+				} else if minutes > 1 {
+					// 设置1分钟提醒定时器
+					timer := time.AfterFunc(time.Duration(minutes-1)*time.Minute, func() {
+						notifyMsg := Message{
+							Type:    "system",
+							Content: "【系统通知】服务器将在1分钟后关闭，请做好准备！",
+							Time:    time.Now().Format("15:04:05"),
+						}
+						s.broadcast <- notifyMsg
+					})
+					s.shutdownTimers = append(s.shutdownTimers, timer)
+				}
+
+				// 设置关闭定时器
+				shutdownTimer := time.AfterFunc(time.Duration(minutes)*time.Minute, func() {
+					// 构造最终关闭消息
+					finalMsg := Message{
+						Type:    "system",
+						Content: "【系统通知】服务器已关闭，感谢使用！",
+						Time:    time.Now().Format("15:04:05"),
+					}
+					// 广播最终消息
+					s.broadcast <- finalMsg
+					// 等待消息广播完成
+					time.Sleep(1 * time.Second)
+					// 关闭所有客户端连接
+					s.clientsMutex.Lock()
+					for conn := range s.clients {
+						conn.Close()
+					}
+					s.clientsMutex.Unlock()
+					// 退出程序
+					os.Exit(0)
+				})
+				s.shutdownTimers = append(s.shutdownTimers, shutdownTimer)
+			}
+		} else {
 			// 普通群聊消息，过滤空内容
 			if inputContent != "" {
 				msg.Type = "chat"
@@ -485,6 +605,10 @@ func main() {
 	// 启动广播协程
 	go server.Broadcaster()
 
+	// 初始化关闭定时器
+	server.shutdownTimers = []*time.Timer{}
+	server.shutdownTime = 0
+
 	// 路由配置
 	http.HandleFunc("/", server.ServeIndex)
 	http.HandleFunc("/ws", server.HandleClient)
@@ -492,12 +616,19 @@ func main() {
 	// 启动服务，监听18080端口（增加端口占用检测）
 	port := "18080"
 	log.Printf("=====================================")
-	log.Printf("终端聊天室 v2.0 启动成功！【乱码+断连+编译错误已修复】")
+	log.Printf("终端聊天室 v2.1 启动成功！【乱码+断连+编译错误已修复】")
 	log.Printf("固定登录密码：%s", fixedPassword)
 	log.Printf("访问地址：http://localhost:%s", port)
 	log.Printf("=====================================")
-	err := http.ListenAndServe(":"+port, nil)
-	if err != nil {
+
+	// 创建HTTP服务器实例，以便后续可以关闭
+	srv := &http.Server{
+		Addr: ":" + port,
+	}
+
+	// 启动服务器
+	err := srv.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
 		log.Fatalf("服务启动失败：%v（请检查18080端口是否被占用）", err)
 	}
 }

@@ -188,6 +188,17 @@
                     // 帮助信息：使用系统随机颜色
                     addMsg(`[${msg.time}]`, msg.content, 'msg-help');
                     break;
+                case 'system':
+                    // 系统通知：使用加粗红色字体
+                    const systemElement = document.createElement('div');
+                    const systemPrefix = `[${msg.time}]`;
+                    const systemContent = msg.content.replace(/\n/g, '<br>');
+                    systemElement.innerHTML = `${systemPrefix}：${systemContent}`;
+                    systemElement.className = 'msg-system';
+                    systemElement.style.color = '#ff0000';
+                    systemElement.style.fontWeight = 'bold';
+                    chatContainer.appendChild(systemElement);
+                    break;
                 case 'color':
                     // 颜色更新：使用系统随机颜色
                     addMsg(`[${msg.time}]`, msg.content, 'msg-color');
@@ -241,6 +252,19 @@
                     prompt.style.color = '#ff0000';
                 }
             }
+        });
+
+        // 7. 聊天显示区域点击事件：点击后输入框自动获取焦点
+        chatContainer.addEventListener('click', function() {
+            // 只有在输入框未禁用时才获取焦点
+            if (!msgInput.disabled) {
+                msgInput.focus();
+            }
+        });
+
+        // 8. 页面加载完成后，输入框自动获取焦点
+        window.addEventListener('load', function() {
+            msgInput.focus();
         });
 
         // 工具函数：添加消息到显示区域（处理换行符\n→<br>，保持终端排版）
