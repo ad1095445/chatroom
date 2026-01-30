@@ -412,7 +412,7 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Format("15:04:05")
 	welcomeMsg := Message{
 		Type: "welcome",
-		Content: fmt.Sprintf("=== 终端聊天室 v2.0 ===\n✅ 登录成功！当前在线：%d 人\n你的信息：%s | %s | %s\n📌 帮助命令：/help(帮助)",
+		Content: fmt.Sprintf("=== 终端聊天室 v2.1 ===\n✅ 登录成功！当前在线：%d 人\n你的信息：%s | %s | %s\n📌 帮助命令：/help(帮助)",
 			onlineCount, maskedIP, clientRegion, userID),
 		Time: now,
 	}
@@ -673,7 +673,7 @@ func main() {
 	// 启动服务，监听18080端口（增加端口占用检测）
 	port := "18080"
 	log.Printf("=====================================")
-	log.Printf("终端聊天室 v2.1 启动成功！【乱码+断连+编译错误已修复】")
+	log.Printf("终端聊天室 v2.1 启动成功！")
 	log.Printf("登录密码：%s", fixedPassword)
 	log.Printf("访问地址：http://localhost:%s", port)
 	log.Printf("=====================================")
