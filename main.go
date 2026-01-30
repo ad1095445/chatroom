@@ -132,6 +132,34 @@ func escapeHTML(s string) string {
 	return buf.String()
 }
 
+// 获取真实客户端 IP 地址，支持反向代理
+func getRealClientIP(r *http.Request) string {
+	// 优先检查反向代理头
+	forwardedFor := r.Header.Get("X-Forwarded-For")
+	if forwardedFor != "" {
+		// X-Forwarded-For 格式: client, proxy1, proxy2
+		parts := strings.Split(forwardedFor, ",")
+		if len(parts) > 0 {
+			// 取第一个非空值作为真实 IP
+			for _, part := range parts {
+				ip := strings.TrimSpace(part)
+				if ip != "" {
+					return ip
+				}
+			}
+		}
+	}
+
+	// 检查 X-Real-IP 头
+	realIP := r.Header.Get("X-Real-IP")
+	if realIP != "" {
+		return realIP
+	}
+
+	//  fallback 到 RemoteAddr
+	return r.RemoteAddr
+}
+
 // 处理IP地址的隐私显示
 func maskIP(ip string) string {
 	// 处理IP样式
@@ -275,8 +303,8 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
-	// 提取客户端纯IP（优化解析，兼容IPv6和带端口的IP）
-	clientIP := r.RemoteAddr
+	// 提取客户端纯IP（支持反向代理，兼容IPv6和带端口的IP）
+	clientIP := getRealClientIP(r)
 
 	// 处理IPv6地址格式 [2001:db8::1]:12345
 	if strings.Contains(clientIP, "[") && strings.Contains(clientIP, "]") {
