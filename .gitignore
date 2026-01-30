@@ -1,0 +1,34 @@
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+demogo
+
+# Go 依赖
+go.work
+go.work.sum
+vendor/
+
+# IDE/编辑器配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+
+# 构建目录
+build/
+dist/
