@@ -334,7 +334,7 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 	// 第一步：密码验证（增加错误处理，防止客户端异常输入导致断连）
 	conn.WriteJSON(Message{
 		Type:    "password",
-		Content: "=== 终端聊天室-登录验证 ===\n请输入固定登录密码：",
+		Content: "=== 终端聊天室-登录验证 ===\n请输入登录密码：",
 		Time:    time.Now().Format("15:04:05"),
 	})
 	for {
@@ -654,7 +654,7 @@ func (s *ChatServer) ServeIndex(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// ====================== 请确认你的固定登录密码 ======================
-	fixedPassword := "ChatRoom2026!" // 可直接修改为你需要的密码，建议使用包含大小写字母、数字和特殊字符的复杂密码
+	fixedPassword := "123" // 可直接修改为你需要的密码，建议使用包含大小写字母、数字和特殊字符的复杂密码
 	// =====================================================================
 
 	// 初始化聊天室
@@ -674,7 +674,7 @@ func main() {
 	port := "18080"
 	log.Printf("=====================================")
 	log.Printf("终端聊天室 v2.1 启动成功！【乱码+断连+编译错误已修复】")
-	log.Printf("固定登录密码：%s", fixedPassword)
+	log.Printf("登录密码：%s", fixedPassword)
 	log.Printf("访问地址：http://localhost:%s", port)
 	log.Printf("=====================================")
 
