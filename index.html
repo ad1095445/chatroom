@@ -123,7 +123,14 @@
         }
         // 建立WebSocket连接（连接Go后端）
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
+        let wsPath = '/ws';
+        // 检查是否有路径前缀（反向代理场景）
+        const pathname = window.location.pathname;
+        if (pathname && pathname !== '/' && !pathname.endsWith('/ws')) {
+            // 移除末尾斜杠并添加/ws
+            wsPath = pathname.replace(/\/$/, '') + '/ws';
+        }
+        const ws = new WebSocket(`${wsProtocol}//${window.location.host}${wsPath}`);
 
         // 1. 连接成功回调
         ws.onopen = function() {
