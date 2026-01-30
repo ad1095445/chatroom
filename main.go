@@ -259,17 +259,6 @@ func getRealClientIP(r *http.Request) string {
 
 // 处理单个WebSocket客户端连接（加固错误处理，防止解析失败导致断连）
 func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
-	// 添加 CORS 支持
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Sec-WebSocket-Key, Sec-WebSocket-Version")
-
-	// 处理 OPTIONS 请求
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -624,10 +613,6 @@ func (s *ChatServer) HandleClient(w http.ResponseWriter, r *http.Request) {
 
 // 提供前端页面访问（静态文件）
 func (s *ChatServer) ServeIndex(w http.ResponseWriter, r *http.Request) {
-	// 添加 CORS 支持
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept")
 	http.ServeFile(w, r, "index.html")
 }
 
